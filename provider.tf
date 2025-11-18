@@ -2,7 +2,7 @@ terraform {
   required_providers {
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
+      version = "~> 5.0"
     }
     aws = {
       source  = "hashicorp/aws"
@@ -19,7 +19,6 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias = "us-east-1"
-
+  alias  = "us-east-1"
   region = "us-east-1"
 }

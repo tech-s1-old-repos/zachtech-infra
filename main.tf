@@ -1,18 +1,21 @@
 locals {
-  s3_origin_id = "myS3Origin"
+  s3_origin_id = "zone-s3-origin"
+  zone_bucket_name = "${var.zone}-${random_uuid.bucket_suffix.result}"
 }
 
 data "aws_caller_identity" "current" {}
 
-resource "aws_s3_bucket" "console_bucket" {
-  bucket        = var.console_bucket
+resource "random_uuid" "bucket_suffix" {}
+
+resource "aws_s3_bucket" "zone_bucket" {
+  bucket        = local.zone_bucket_name
   force_destroy = true
 
-  tags = merge(var.default_tags, { Domain = var.console_subdomain })
+  tags = merge(var.default_tags, { Domain = var.zone })
 }
 
 resource "aws_s3_bucket" "logs_bucket" {
-  bucket        = var.logs_bucket
+  bucket        = "${local.zone_bucket_name}-logs"
   force_destroy = true
 
   tags = merge(var.default_tags, { Domain = "logs" })
@@ -24,6 +27,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs_bucket_7_days" {
   rule {
     id     = "7-day"
     status = "Enabled"
+
+    filter {
+    }
 
     expiration {
       days = 7
@@ -58,8 +64,8 @@ resource "aws_s3_bucket_public_access_block" "logs_bucket" {
 }
 
 
-resource "aws_s3_bucket_policy" "console_bucket" {
-  bucket = aws_s3_bucket.console_bucket.id
+resource "aws_s3_bucket_policy" "zone_bucket" {
+  bucket = aws_s3_bucket.zone_bucket.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -70,35 +76,19 @@ resource "aws_s3_bucket_policy" "console_bucket" {
           Service = "cloudfront.amazonaws.com"
         }
         Action   = "s3:GetObject"
-        Resource = "${aws_s3_bucket.console_bucket.arn}/*"
+        Resource = "${aws_s3_bucket.zone_bucket.arn}/*"
         Condition = {
           StringEquals = {
             "AWS:SourceArn" = aws_cloudfront_distribution.s3_distribution.arn
           }
         }
-      },
-      {
-        Sid    = "AllowGitHubUser"
-        Effect = "Allow"
-        Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/github"
-        }
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          aws_s3_bucket.console_bucket.arn,
-          "${aws_s3_bucket.console_bucket.arn}/*"
-        ]
       }
     ]
   })
 }
 
-resource "aws_s3_bucket_public_access_block" "console_bucket" {
-  bucket = aws_s3_bucket.console_bucket.id
+resource "aws_s3_bucket_public_access_block" "zone_bucket" {
+  bucket = aws_s3_bucket.zone_bucket.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -107,8 +97,8 @@ resource "aws_s3_bucket_public_access_block" "console_bucket" {
 }
 
 resource "aws_cloudfront_origin_access_control" "default" {
-  name                              = "${var.console_bucket}-oac"
-  description                       = "OAC for ${var.console_bucket}"
+  name                              = "${local.zone_bucket_name}-oac"
+  description                       = "OAC for ${local.zone_bucket_name}"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
@@ -116,7 +106,7 @@ resource "aws_cloudfront_origin_access_control" "default" {
 
 resource "aws_cloudfront_distribution" "s3_distribution" {
   origin {
-    domain_name              = aws_s3_bucket.console_bucket.bucket_regional_domain_name
+    domain_name              = aws_s3_bucket.zone_bucket.bucket_regional_domain_name
     origin_access_control_id = aws_cloudfront_origin_access_control.default.id
     origin_id                = local.s3_origin_id
   }
@@ -124,15 +114,15 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
   enabled             = true
   is_ipv6_enabled     = true
   default_root_object = "index.html"
-  comment             = "Dist for ${local.console_domain}"
+  comment             = "Dist for ${local.zone_bucket_name}"
 
-  aliases = [local.console_domain]
+  aliases = [var.zone]
 
   # TODO: Disabled currently
   #   logging_config {
   #     include_cookies = true
   #     bucket          = "${var.logs_bucket}.s3.amazonaws.com"
-  #     prefix          = "${local.console_domain}/"
+  #     prefix          = "${local.zone_bucket_name}/"
   #   }
 
   default_cache_behavior {
@@ -177,7 +167,7 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
   }
 
   viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate_validation.console_cert_validation_wait.certificate_arn
+    acm_certificate_arn      = aws_acm_certificate_validation.zone_cert_validation_wait.certificate_arn
     ssl_support_method       = "sni-only"
     minimum_protocol_version = "TLSv1.2_2021"
   }
@@ -187,7 +177,7 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
   }
 
   tags = merge(var.default_tags, {
-    Domain = var.console_subdomain
+    Domain = var.zone
   })
 }
 
